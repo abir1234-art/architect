@@ -1,0 +1,203 @@
+version: '3.7'
+services:
+  elasticsearch:
+    image: elasticsearch:7.9.2
+    ports:
+      - '9200:9200'
+    environment:
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  kibana:
+    image: kibana:7.9.2
+    ports:
+      - '5601:5601'
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  logstash:
+    image: logstash:7.9.2
+    ports:
+      - '5514:5514/udp'
+      - '5001:5000/tcp'
+      - '5044:5044'
+    volumes:
+      - type: bind
+        source: ./pipeline_container_logstash/
+        target: /usr/share/logstash/pipeline
+        read_only: true
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+      - dionaea-logs:/opt/dionaea/var/log/dionaea
+      - mailoney-logs:/var/log/mailoney
+      - glastopf-logs:/var/log/glastopf
+      - suricata-logs:/var/log/suricata
+      - snort-logs:/var/log/snort
+      - ./logstash_pipeline/logstash_geolite/GeoLite2-City.mmdb:/usr/share/logstash/GeoLite2-City.mmdb
+      - ./logstash_pipeline/logstash_geolite/GeoLite2-ASN.mmdb:/usr/share/logstash/GeoLite2-ASN.mmdb
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  cowrie:
+    image: cowrie/cowrie:latest
+    ports:
+      - '2222:2222'
+    environment:
+      - COWRIE_LOGDIR=/cowrie/cowrie-git/var/log/cowrie
+    volumes:
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  ubuntu:
+    image: ubuntu:20.04
+    container_name: ubuntu_ssh
+    tty: true
+    stdin_open: true
+    ports:
+      - '2223:22'
+    command: /bin/bash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net 
+
+  mailoney:
+    build:
+      context: .
+      dockerfile: Dockerfile 
+    ports:
+      - '2525:25'
+    environment:
+      - MAILONEY_LOGDIR=/var/log/mailoney
+    volumes:
+      - mailoney-logs:/var/log/mailoney
+    depends_on:
+      - logstash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+  
+  kali:
+    image: kalilinux/kali-rolling
+    container_name: kali_snort
+    tty: true
+    stdin_open: true
+    depends_on:
+      - logstash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  dionaea:
+    image: dinotools/dionaea:latest
+    ports:
+      - '21021:21'
+      - '21042:42'
+      - '21069:69/udp'
+      - '21080:80'
+      - '21135:135'
+      - '21443:443'
+      - '21445:445'
+      - '23306:3306'
+      - '25060:5060/udp'
+      - '27017:27017'
+    environment:
+      - DIONAEA_LOGDIR=/opt/dionaea/var/log/dionaea
+      - DIONAEA_LOGFORMAT=json
+    volumes:
+      - dionaea-logs:/opt/dionaea/var/log/dionaea
+    depends_on:
+      - logstash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  glastopf:
+    image: honeynet/glastopf:latest
+    ports:
+      - '8080:80'
+    environment:
+      - GLASTOPF_LOGDIR=/var/log/glastopf
+      - GLASTOPF_LOGFORMAT=json
+    volumes:
+      - glastopf-logs:/var/log/glastopf
+    depends_on:
+      - logstash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  suricata:
+    image: jasonish/suricata:latest
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    ports:
+      - '65000:65000'
+    volumes:
+      - suricata-logs:/var/log/suricata
+    command: /usr/bin/suricata -i eth0 -c /etc/suricata/suricata.yaml
+    depends_on:
+      - logstash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  snort:
+    image: linton/docker-snort
+    container_name: snort
+    cap_add:
+      - NET_ADMIN
+    tty: true
+    stdin_open: true
+    volumes:
+      - snort-logs:/var/log/snort
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  ubuntu2:
+    image: ubuntu:20.04
+    container_name: ubuntu_additional
+    tty: true
+    stdin_open: true
+    ports:
+      - '2224:22'
+    cap_add:
+      - NET_ADMIN
+    command: /bin/bash
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  glastopf2:
+    image: fbolotin/glastopf
+    ports:
+      - '8081:80'
+    volumes:
+      - glastopf-logs:/var/log/glastopf
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+  dns-honeypot:
+    image: jtpereyda/booby-dns:latest
+    ports:
+      - '53:53/udp'
+    volumes:
+      - dns-honeypot-logs:/var/log/dns-honeypot
+    networks:
+      - elk_elastic_logstash_filebeat_honeypot_net
+
+volumes:
+  cowrie-logs:
+  dionaea-logs:
+  mailoney-logs:
+  snort-logs:
+  glastopf-logs:
+  suricata-logs:
+  dns-honeypot-logs:
+
+networks:
+  elk_elastic_logstash_filebeat_honeypot_net:
+    external: true
+
